@@ -8,9 +8,9 @@ from transformers import GPT2Tokenizer
 class GPTTransformer(nn.Module):
     def __init__(self, num_embeddings:int):
         super().__init__()
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.num_embeddings = num_embeddings
         
-        # embedding, vocabulary 50000, embedding length 512
+        # embedding, vocabulary size from tokenizer, embedding length 512
         self.token_embedding = nn.Embedding(num_embeddings=num_embeddings, embedding_dim=512)
         
         # position
@@ -29,24 +29,19 @@ class GPTTransformer(nn.Module):
         self.w_k = nn.Linear(512, 512, bias=False)
         self.w_v = nn.Linear(512, 512, bias=False)
         self.w_output_project_layer = nn.Linear(512, 512)
-        self.attention_dropout = nn.Dropout(0.1)
         self.attention_scale = math.sqrt(512/8) #64
-
 
         # feed forard from 512 2048
         self.feed_forward_linear1 = nn.Linear(512, 2048)
         self.feed_forward_linear2 = nn.Linear(2048, 512)
-        self.feed_forward_dropout = nn.Dropout(0.1)
         
         # nomorlize
         self.layer_normalize1 = nn.LayerNorm(512)
         self.layer_normalize2 = nn.LayerNorm(512)
-        self.layer_dropout = nn.Dropout(0.1)
 
         #output layer
         self.final_normal_layer = nn.LayerNorm(512)
-        self.lm_head = nn.Linear(512, 50000, bias=False)
-        self.lm_head.weight = self.token_embedding.weight
+        self.lm_head = nn.Linear(512, num_embeddings, bias=False)
 
         self.dropout = nn.Dropout(0.1)
         
@@ -67,7 +62,9 @@ class GPTTransformer(nn.Module):
         torch.nn.init.zeros_(self.layer_normalize2.bias)
         torch.nn.init.ones_(self.final_normal_layer.weight)
         torch.nn.init.zeros_(self.final_normal_layer.bias)
-        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.02)
+        
+        # Tie weights after initialization
+        self.lm_head.weight = self.token_embedding.weight
 
     def forward(self, 
                 input_ids: torch.Tensor, 
@@ -75,7 +72,8 @@ class GPTTransformer(nn.Module):
                                                                  Optional[torch.Tensor]]:
         # train with many batches for efficiency, infer with only one.
         batch_size, seq_length = input_ids.shape
-        mask = torch.tril(torch.ones(seq_length, seq_length, device=self.device))
+        device = input_ids.device
+        mask = torch.tril(torch.ones(seq_length, seq_length, device=device))
         mask = mask.unsqueeze(0).unsqueeze(0) #(1,1,seq_length, seq_length)
         x = self.token_embedding(input_ids) * math.sqrt(512)
         x = x + self.position_encoding[:, :seq_length]
@@ -182,6 +180,12 @@ def train():
                 optimizer.zero_grad()
             
             total_loss += loss.item() * accumulation_steps
+        
+        # Apply any remaining gradients
+        if len(batches) % accumulation_steps != 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad()
 
         avg_loss= total_loss/len(batches)
         print(f"Epoch {epoch}/100 - Loss: {avg_loss:.4f}")
