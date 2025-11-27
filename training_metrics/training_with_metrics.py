@@ -7,7 +7,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from transformers import GPT2Tokenizer
-from transformer_gpt import GPTTransformer
+from gpt_transformer.transformer_gpt import GPTTransformer
 
 class TrainingMetrics:
     """Track and visualize training metrics"""

@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 from transformers import GPT2Tokenizer
-from transformer_gpt import GPTTransformer
+from gpt_transformer.transformer_gpt import GPTTransformer
 
 class GPTTransformerWithAttention(GPTTransformer):
     """Extended model that captures attention weights"""
