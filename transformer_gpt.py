@@ -127,7 +127,7 @@ def train():
     tokens = []
     for i in range(0, len(text), chunk_size):
         chunk = text[i:i+chunk_size]
-        chunk_tokens = tokenizer.encode(chunk, truncation=True, max_length=1024)
+        chunk_tokens = tokenizer.encode(chunk, Truncation=False)
         tokens.extend(chunk_tokens)
     
     sequences = []
