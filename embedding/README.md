@@ -1,4 +1,4 @@
-# Sentence Embeddings
+# Text Embeddings
 
 This repository contains Python scripts that demonstrate how to generate and use sentence embeddings with transformer models. The conversation leading to this code covered the entire lifecycle of creating and using these powerful semantic vectors.
 
