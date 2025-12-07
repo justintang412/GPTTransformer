@@ -7,7 +7,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = GPTTransformer(tokenizer.vocab_size).to(device)
 model.load_state_dict(torch.load('gpt_transformer/trained_model.pth', map_location=device))
 model.eval()
-input_ids = torch.tensor([tokenizer.encode('We are accounted poor')], device=device)
+input_ids = torch.tensor([tokenizer.encode('What he cannot')], device=device)
 with torch.no_grad():
     generated = []
     for _ in range(30):
