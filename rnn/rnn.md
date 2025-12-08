@@ -1,8 +1,3 @@
-Here is a clear, compact summary of everything we discussed:
-
-⸻
-
-✅ Conversation Summary (RNNs, Vanishing & Exploding Gradients)
 
 1. Why RNNs add h @ W_hh
 
@@ -86,13 +81,3 @@ Vanilla RNNs do not work for long sequences because gradients either vanish or e
 
 LSTM/GRU fix this.
 Transformers eliminate the problem completely.
-
-⸻
-
-9. Code demos
-
-You asked for exploding gradient demonstration → provided a minimal PyTorch script showing exploding gradients using large weights and long sequences.
-
-⸻
-
-If you want, I can also produce a single-page cheat sheet with diagrams explaining vanishing vs exploding gradients.
