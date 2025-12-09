@@ -1,0 +1,12 @@
+Summary
+- **Architecture:** Single `nn.Module` with shared parameters across all 6 layers: `weight_ih (512×128)`, `weight_hh (512×512)`, `bias_ih`, `bias_bh`, plus an `output_layer` `Linear(512→1)`.
+- **Update Rules:** 
+  - Layer 0: `h[0] = tanh(x_t @ W_ih^T + b_ih + h[0] @ W_hh^T + b_hh)`
+  - Layers 1–5: `h[l] = tanh(h[l-1] @ W_hh^T + b_ih + h[l] @ W_hh^T + b_hh)` (reuses `W_hh` for inter-layer and recurrent terms).
+- **Forward Output:** Collects last-layer hidden at each time step, concatenates to `(batch, seq_len, 512)`, then applies `output_layer` to get `(batch, seq_len, 1)`.
+- **Hidden State:** Initialized as zeros `(6, batch_size_fixed=10, 512)` when not provided; requires input batch size to match 10.
+- **Dataset:** Sine-wave sequences of length 20; each sample is `(seq_len, 1)` with scalar target being the next sine value.
+- **Training Loop:** Adam (lr=1e-3), MSE against `output[:, -1, :]` (prediction from last time step), prints batch and epoch loss; runs on CPU/GPU.
+- **Conceptual Traits:** Weight-tyed stacked RNN—same transform reused across layers; simpler and parameter-efficient but less expressive than per-layer-parameter RNN.
+- **Shape Validity:** With `cell_hh` using `weight_hh`, matrix dimensions align for deeper layers; layer 0 uses `weight_ih` correctly.
+- **Key Differences vs Layered RNN:** Shared parameters (tying), coupled biases, modified deeper-layer input handling, hardcoded `num_layers` and `batch_size`; will train differently than the reference that has distinct per-layer `W_ih/W_hh/bias` and dynamic hidden init.
