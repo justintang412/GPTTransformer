@@ -5,11 +5,15 @@ from typing import Tuple
 
 
 class RNN_Flat(nn.Module):
-    def __init__(self):
+    def __init__(self, input_size: int, hidden_size: int):
+        """
+        Args:
+            input_size: Feature dimension per time step.
+            hidden_size: Feature dimension of the hidden state.
+        """
         super().__init__()
-        self.input_size = 128
-        self.hidden_size = 512
-        self.batch_size = 10
+        self.input_size = input_size
+        self.hidden_size = hidden_size
         self.weight_ih = nn.Parameter(
             torch.Tensor(self.hidden_size, self.input_size))
         self.bias_ih = nn.Parameter(torch.Tensor(self.hidden_size))
@@ -20,19 +24,23 @@ class RNN_Flat(nn.Module):
         for weight in self.parameters():
             weight.data.uniform_(-std, std)
 
-        def cell(x, h):
-            return torch.tanh(
-                torch.mm(x, self.weight_ih.t())
-                + self.bias_ih
-                + torch.mm(h, self.weight_hh.t())
-                + self.bias_bh
-            )
-
-        self.cell = cell
+        self.tanh = lambda x, h: torch.tanh(
+            torch.mm(x, self.weight_ih.t())
+            + self.bias_ih
+            + torch.mm(h, self.weight_hh.t())
+            + self.bias_bh
+        )
 
     def forward(
         self, x: torch.Tensor, h: torch.Tensor = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            x batch size, input size
+            h batch size, hidden size
+        Returns:
+
+        """
         # x shape: (batch_size, sequnce_size, input_size)
         sequence_output = []
         for t in range(x.shape[1]):
@@ -43,9 +51,8 @@ class RNN_Flat(nn.Module):
                     h = torch.zeros(
                         6, self.batch_size, self.hidden_size, device=x.device
                     )
-                    h[0] = self.cell(x_t, h=h[0])
+                    h[0] = self.tanh(x_t, h=h[0])
                 else:
                     h[layer_id] = self.cell(h[layer_id - 1], h[layer_id])
             sequence_output.append(h[-1].unsqueeze(1))
         return torch.cat(sequence_output, dim=1), h
-        
