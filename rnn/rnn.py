@@ -9,7 +9,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 
 class RNNCell(nn.Module):
@@ -87,7 +87,7 @@ class RNN(nn.Module):
             for i in range(num_layers)
         ])
     
-    def forward(self, x: torch.Tensor, h: torch.Tensor = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, h: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass through the RNN
         
@@ -110,12 +110,13 @@ class RNN(nn.Module):
         # Process each time step
         for t in range(seq_length):
             x_t = x[:, t, :]  # Shape: (batch_size, input_size)
-            
+            h_new = []
             # Process through each layer
             for layer in range(self.num_layers):
-                h[layer] = self.rnn_cells[layer](x_t, h[layer])
-                x_t = h[layer]  # Output of current layer becomes input to next
-            
+                h_layer_new = self.rnn_cells[layer](x_t, h[layer])
+                x_t = h_layer_new
+                h_new.append(h_layer_new)
+            h = torch.stack(h_new)
             output.append(h[-1].unsqueeze(1))  # Use output from last layer
         
         output = torch.cat(output, dim=1)  # Shape: (batch_size, seq_length, hidden_size)
@@ -153,6 +154,135 @@ class SimpleRNNWithOutput(nn.Module):
         rnn_output, _ = self.rnn(x)
         # Use the last hidden state for prediction
         last_hidden = rnn_output[:, -1, :]
+        output = self.output_layer(last_hidden)
+        return output
+
+
+class LSTMCell(nn.Module):
+    """Basic LSTM cell implementing one time step.
+
+    Equations (per time step):
+        i_t = sigmoid(W_ii x_t + W_hi h_{t-1} + b_i)
+        f_t = sigmoid(W_if x_t + W_hf h_{t-1} + b_f)
+        g_t = tanh   (W_ig x_t + W_hg h_{t-1} + b_g)
+        o_t = sigmoid(W_io x_t + W_ho h_{t-1} + b_o)
+
+        c_t = f_t * c_{t-1} + i_t * g_t
+        h_t = o_t * tanh(c_t)
+    """
+
+    def __init__(self, input_size: int, hidden_size: int):
+        super(LSTMCell, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+
+        # We pack all four gates into single matrices for efficiency
+        self.weight_ih = nn.Parameter(torch.Tensor(4 * hidden_size, input_size))
+        self.weight_hh = nn.Parameter(torch.Tensor(4 * hidden_size, hidden_size))
+        self.bias_ih = nn.Parameter(torch.Tensor(4 * hidden_size))
+        self.bias_hh = nn.Parameter(torch.Tensor(4 * hidden_size))
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        std = 1.0 / (self.hidden_size) ** 0.5
+        for weight in self.parameters():
+            weight.data.uniform_(-std, std)
+
+    def forward(self, x: torch.Tensor, h: torch.Tensor, c: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """One LSTM step.
+
+        Args:
+            x: (batch_size, input_size)
+            h: previous hidden state (batch_size, hidden_size)
+            c: previous cell state (batch_size, hidden_size)
+
+        Returns:
+            h_new, c_new: updated hidden and cell states
+        """
+        gates = (
+            torch.mm(x, self.weight_ih.t()) + self.bias_ih +
+            torch.mm(h, self.weight_hh.t()) + self.bias_hh
+        )
+
+        i_gate, f_gate, g_gate, o_gate = gates.chunk(4, dim=1)
+        i_gate = torch.sigmoid(i_gate)
+        f_gate = torch.sigmoid(f_gate)
+        g_gate = torch.tanh(g_gate)
+        o_gate = torch.sigmoid(o_gate)
+
+        c_new = f_gate * c + i_gate * g_gate
+        h_new = o_gate * torch.tanh(c_new)
+        return h_new, c_new
+
+
+class LSTM(nn.Module):
+    """Multi-layer LSTM built from LSTMCell, similar to the RNN class above."""
+
+    def __init__(self, input_size: int, hidden_size: int, num_layers: int = 1):
+        super(LSTM, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        self.lstm_cells = nn.ModuleList([
+            LSTMCell(input_size if i == 0 else hidden_size, hidden_size)
+            for i in range(num_layers)
+        ])
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        h: Optional[torch.Tensor] = None,
+        c: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Forward pass through time.
+
+        Args:
+            x: (batch_size, seq_length, input_size)
+            h: (num_layers, batch_size, hidden_size) or None
+            c: (num_layers, batch_size, hidden_size) or None
+
+        Returns:
+            output: (batch_size, seq_length, hidden_size) from last layer
+            (h_n, c_n): final hidden and cell states
+        """
+        batch_size, seq_length, _ = x.size()
+
+        if h is None:
+            h = torch.zeros(self.num_layers, batch_size, self.hidden_size, device=x.device)
+        if c is None:
+            c = torch.zeros(self.num_layers, batch_size, self.hidden_size, device=x.device)
+
+        outputs: List[torch.Tensor] = []
+
+        for t in range(seq_length):
+            x_t = x[:, t, :]
+            new_h_layers, new_c_layers = [], []
+            for layer in range(self.num_layers):
+                new_h_layer, new_c_layer = self.lstm_cells[layer](x_t, h[layer], c[layer])
+                new_h_layers.append(new_h_layer)
+                new_c_layers.append(new_c_layer)
+                x_t = new_h_layer
+            h = torch.stack(new_h_layers)
+            c = torch.stack(new_c_layers)
+            outputs.append(h[-1].unsqueeze(1))
+
+        output = torch.cat(outputs, dim=1)
+        return output, (h, c)
+
+
+class SimpleLSTMWithOutput(nn.Module):
+    """LSTM-based sequence-to-value model (parallel to SimpleRNNWithOutput)."""
+
+    def __init__(self, input_size: int, hidden_size: int, output_size: int, num_layers: int = 1):
+        super(SimpleLSTMWithOutput, self).__init__()
+        self.lstm = LSTM(input_size, hidden_size, num_layers)
+        self.output_layer = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        lstm_output, _ = self.lstm(x)
+        last_hidden = lstm_output[:, -1, :]
         output = self.output_layer(last_hidden)
         return output
 
@@ -296,7 +426,7 @@ class Trainer:
         plt.ylabel('Loss')
         plt.legend()
         plt.grid(True)
-        plt.savefig('rnn_losses.png')
+        plt.savefig('rnn_losses1.png')
         print("Loss plot saved as 'rnn_losses.png'")
         plt.show()
 
@@ -305,14 +435,14 @@ if __name__ == "__main__":
     # Set random seeds for reproducibility
     torch.manual_seed(42)
     np.random.seed(42)
-    
+    torch.autograd.set_detect_anomaly(True)
     # Configuration
     INPUT_SIZE = 1
     HIDDEN_SIZE = 64
     OUTPUT_SIZE = 1
     NUM_LAYERS = 2
     BATCH_SIZE = 32
-    EPOCHS = 100
+    EPOCHS = 10
     SEQ_LENGTH = 20
     
     # Device
@@ -335,7 +465,7 @@ if __name__ == "__main__":
     
     # Create model
     print("Creating RNN model...")
-    model = SimpleRNNWithOutput(
+    model = SimpleLSTMWithOutput(
         input_size=INPUT_SIZE,
         hidden_size=HIDDEN_SIZE,
         output_size=OUTPUT_SIZE,
