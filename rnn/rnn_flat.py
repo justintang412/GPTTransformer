@@ -27,26 +27,19 @@ class RNN_Flat(nn.Module):
         for weight in self.parameters():
             weight.data.uniform_(-std, std)
 
-        self.tanh = lambda x, h: torch.tanh(
+        self.first_cell = lambda x, h: torch.tanh(
             torch.mm(x, self.weight_ih.t())
             + self.bias_ih
             + torch.mm(h, self.weight_hh.t())
             + self.bias_bh
         )
 
-        self.cell_ih = cell_ih
-
-        # xt:(batch_size, hidden_size), h:(batch_size, hidden_size)
-        # From the second layer
-        def cell_hh(xt, h):
-            return torch.tanh(
-                torch.mm(xt, self.weight_hh.t())
-                + self.bias_ih
-                + torch.mm(h, self.weight_hh.t())
-                + self.bias_bh
-            )
-
-        self.cell_hh = cell_hh
+        self.subsequence_cell = lambda xt, h: torch.tanh(
+            torch.mm(xt, self.weight_hh.t())
+            + self.bias_bh
+            + torch.mm(h, self.weight_hh.t())
+            + self.bias_bh
+        )
 
     # output: (batch_size, sequence_size, hidden_size)
     # h: (num_layers, batch_size, hidden_size)
@@ -60,22 +53,33 @@ class RNN_Flat(nn.Module):
         Returns:
 
         """
-        # x shape: (batch_size, sequnce_size, input_size)
+        # x shape: (batch_size, sequence_size, input_size)
+        batch_size, seq_len, _ = x.shape
+        num_layers = 6
         sequence_output = []
+
+        # initialize hidden if not provided
         if h is None:
-            h = torch.zeros(6, self.batch_size, self.hidden_size, device=x.device)
-        for t in range(x.shape[1]):
-            x_t = x[:, t, :]  # time t step: batch_size, input_size
-            # 6 layers
-            for layer_id in range(6):
-                if h is None:
-                    h = torch.zeros(
-                        6, self.batch_size, self.hidden_size, device=x.device
-                    )
-                    h[0] = self.tanh(x_t, h=h[0])
-                else:
-                    h[layer_id] = self.cell_hh(h[layer_id - 1], h[layer_id])
-            sequence_output.append(h[-1].unsqueeze(1))
+            h = torch.zeros(num_layers, batch_size, self.hidden_size, device=x.device)
+
+        for t in range(seq_len):
+            x_t = x[:, t, :]  # (batch_size, input_size)
+
+            # compute next hidden states without in-place writes
+            h_next = []
+            # layer 0 uses input x_t
+            h0 = self.first_cell(x_t, h=h[0])
+            h_next.append(h0)
+
+            # higher layers use the previous layer's hidden at the same time step
+            for layer_id in range(1, num_layers):
+                h_next.append(self.subsequence_cell(h_next[layer_id - 1], h[layer_id]))
+
+            # stack to form new hidden state tensor for all layers
+            h = torch.stack(h_next, dim=0)
+
+            # collect top/last layer hidden state for this time step
+            sequence_output.append(h[-1].unsqueeze(1).contiguous())
         
         output = self.output_layer(torch.cat(sequence_output, dim=1))
         return output, h
@@ -90,10 +94,10 @@ class SineWaveDataset(Dataset):
         for _ in range(1000):
             start = np.random.uniform(0, 10)
             x = np.arange(start, start + self.sequence_length, 1)  # 20 time steps
-            sequence = np.sin(self.frequence * x)
-            target = np.sin(self.frequence * (start + self.sequence_length))
+            sequence = np.sin(self.frequence * x).astype(np.float32)
+            target = np.sin(self.frequence * (start + self.sequence_length)).astype(np.float32)
             self.data.append(
-                sequence.astype(np.float32).reshape(-1, 1)
+                sequence.reshape(-1, 1)
             )  # (sequence_length, 1)
             self.targets.append(target)
 
@@ -111,16 +115,16 @@ def train():
     train_size = int(0.8*len(dataset))
     test_size = len(dataset) - train_size
     train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
-    train_loader = DataLoader(train_dataset, batch_size=10, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=10, shuffle=False)
+    train_loader = DataLoader(train_dataset, batch_size=100, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=100, shuffle=False)
 
-    model = RNN_Flat().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    model = RNN_Flat(1, 2048).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
     criterion = nn.MSELoss()
     train_losses = []
     evaluation_losses = []
 
-    for epoch in range(1): #10 epochs
+    for epoch in range(100): #10 epochs
         model.train()
         total_loss = 0.0
         for batch_index, (x, y) in enumerate(train_loader):
